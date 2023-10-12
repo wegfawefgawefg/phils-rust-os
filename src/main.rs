@@ -1,22 +1,31 @@
 #![no_std]
 #![no_main]
 
-use core::fmt::Write;
 use core::panic::PanicInfo;
+// use uart_16550::SerialPort;
+// use serial::SerialWriter;
 
-use uart_16550::SerialPort;
+use crate::{
+    vga_text_mode::VGAColorCode,
+    vga_text_mode_drawing::{draw_circle, draw_line},
+    vga_text_mode_terminal::VGA_TEXT_MODE_TERMINAL,
+};
 
-use serial::SerialWriter;
-use vga_text_mode::VGAWriter;
-
-mod serial;
-mod vga_text_mode;
+pub mod init;
+// pub mod interupts;
+pub mod serial;
+pub mod vga_text_mode;
+pub mod vga_text_mode_drawing;
+pub mod vga_text_mode_terminal;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let mut vga = VGAWriter::new();
-    vga.col = 0; // Reset to start of screen
-    write!(&mut vga, "PANIC: {}", info).unwrap();
+    use core::fmt::Write;
+
+    let mut vga_terminal = VGA_TEXT_MODE_TERMINAL.lock();
+    vga_terminal.col = 0; // Reset to start of screen
+    let _ = write!(&mut *vga_terminal, "PANIC: {}", info);
+
     loop {}
 }
 
@@ -44,20 +53,20 @@ fn delay() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let mut vga = VGAWriter::new();
-    let mut ser = SerialWriter::new();
+    println!("Hello World{}", "!");
 
-    for i in 0..1000 {
-        write!(&mut vga, "{}\n", i).unwrap(); // Use '\n' to insert new lines
-        delay();
-    }
+    // Define some color codes
 
-    for i in 0..25 {
-        write!(&mut ser, "{} ", i).unwrap(); // Use '\n' to insert new lines
-        delay();
-    }
+    let block = 0xDB;
 
-    exit_qemu(QemuExitCode::Failed);
+    // Draw circles
+    draw_circle(40, 12, 10, block, VGAColorCode::Red);
+    draw_circle(60, 12, 8, block, VGAColorCode::Green);
+    draw_circle(80, 12, 6, block, VGAColorCode::Blue);
+
+    // Draw lines
+    draw_line(5, 5, 20, 20, block, VGAColorCode::Cyan);
+    draw_line(20, 5, 5, 20, block, VGAColorCode::Cyan);
 
     loop {}
 }
