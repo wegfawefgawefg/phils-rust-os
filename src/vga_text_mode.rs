@@ -295,3 +295,9 @@ impl VGATextMode {
         }
     }
 }
+
+impl Default for VGATextMode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
