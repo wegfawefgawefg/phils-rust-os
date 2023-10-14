@@ -1,74 +1,63 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
+
+use core::{fmt::Write, sync::atomic::Ordering};
 
 use core::panic::PanicInfo;
 // use uart_16550::SerialPort;
 // use serial::SerialWriter;
 
+use interupts::PICS;
+use util::halt_loop;
+use vga_text_mode_terminal::CURSOR_TOGGLE_FLAG;
+
 use crate::{
-    random::{pseudo_rand, pseudo_rand_in_range_u32},
+    interupts::{overflow_stack, trigger_page_fault},
+    util::delay,
     vga_text_mode::{VGAColorCode, BUFFER_HEIGHT, BUFFER_WIDTH, VGA_TEXT_MODE},
-    vga_text_mode_drawing::{draw_circle, draw_line},
+    vga_text_mode_drawing::{draw_circle, draw_line, draw_point, BLOCK},
     vga_text_mode_terminal::VGA_TEXT_MODE_TERMINAL,
 };
 
-pub mod init;
-// pub mod interupts;
+pub mod gdt;
+pub mod interupts;
 pub mod random;
 pub mod serial;
+pub mod util;
 pub mod vga_text_mode;
 pub mod vga_text_mode_drawing;
 pub mod vga_text_mode_terminal;
 
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    use core::fmt::Write;
-
-    let mut vga_terminal = VGA_TEXT_MODE_TERMINAL.lock();
-    vga_terminal.col = 0; // Reset to start of screen
-    let _ = write!(&mut *vga_terminal, "PANIC: {}", info);
-
-    loop {}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum QemuExitCode {
-    Success = 0x10,
-    Failed = 0x11,
-}
-
-pub fn exit_qemu(exit_code: QemuExitCode) {
-    use x86_64::instructions::port::Port;
-
-    unsafe {
-        let mut port = Port::new(0xf4);
-        port.write(exit_code as u32);
-    }
-}
-
-fn delay() {
-    for _ in 0..10000 {
-        // Busy-wait; do nothing
-    }
+pub fn init() {
+    gdt::init();
+    interupts::init();
+    unsafe { PICS.lock().initialize() };
+    x86_64::instructions::interrupts::enable();
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    println!("Hello World{}", "!");
+    init();
 
-    // Define some color codes
+    // loop {
+    //     print!("Hello World!");
+    //     delay();
+    //     delay();
+    // }
+    halt_loop();
+}
 
-    let block = 0xDB;
-
+// need a function for doing write! macro over the serial port
+pub fn draw_bouncy_ball() {
     // Draw circles
-    draw_circle(40, 12, 10, block, VGAColorCode::Red);
-    draw_circle(60, 12, 8, block, VGAColorCode::Green);
-    draw_circle(80, 12, 6, block, VGAColorCode::Blue);
+    draw_circle(40, 12, 10, BLOCK, VGAColorCode::Red);
+    draw_circle(60, 12, 8, BLOCK, VGAColorCode::Green);
+    draw_circle(80, 12, 6, BLOCK, VGAColorCode::Blue);
 
     // Draw lines
-    draw_line(5, 5, 20, 20, block, VGAColorCode::Cyan);
-    draw_line(20, 5, 5, 20, block, VGAColorCode::Cyan);
+    draw_line(5, 5, 20, 20, BLOCK, VGAColorCode::Cyan);
+    draw_line(20, 5, 5, 20, BLOCK, VGAColorCode::Cyan);
 
     let mut x = BUFFER_WIDTH as i32 / 2;
     let mut y = BUFFER_HEIGHT as i32 / 2;
@@ -80,14 +69,17 @@ pub extern "C" fn _start() -> ! {
         // Clear screen
         VGA_TEXT_MODE.lock().clear_screen();
 
-        // Draw circle
+        // // Draw circle
         draw_circle(
             x as usize,
             y as usize,
             r as usize,
-            block,
-            VGAColorCode::White,
+            BLOCK,
+            VGAColorCode::DarkGray,
         );
+
+        // draw a white spec in the topish right of the circle
+        draw_point((x + 2) as usize, (y - 1) as usize, VGAColorCode::White);
 
         // Update position based on velocity
         x += dx;
@@ -101,13 +93,12 @@ pub extern "C" fn _start() -> ! {
             dy = -dy;
         }
 
-        // Delay for visibility
+        println!("x: {}, y: {}", x, y);
+        VGA_TEXT_MODE_TERMINAL.lock().row = 0;
+
+        // // Delay for visibility
         for _ in 0..60 {
             delay();
         }
     }
-
-    loop {}
 }
-
-// need a function for doing write! macro over the serial port

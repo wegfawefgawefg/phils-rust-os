@@ -14,6 +14,12 @@ impl SerialWriter {
     }
 }
 
+impl Default for SerialWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Write for SerialWriter {
     fn write_str(&mut self, s: &str) -> Result {
         for byte in s.bytes() {

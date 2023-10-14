@@ -1,6 +1,6 @@
-use crate::vga_text_mode::{
-    VGAChar, VGAColorCode, VGATextMode, BUFFER_HEIGHT, BUFFER_WIDTH, VGA_TEXT_MODE,
-};
+use crate::vga_text_mode::{VGAColorCode, VGATextMode, BUFFER_HEIGHT, BUFFER_WIDTH, VGA_TEXT_MODE};
+
+pub const BLOCK: u8 = 0xDB;
 
 pub fn draw_line(x1: usize, y1: usize, x2: usize, y2: usize, byte: u8, color: VGAColorCode) {
     let mut vga = VGA_TEXT_MODE.lock();
@@ -99,4 +99,13 @@ pub fn draw_circle(cx: usize, cy: usize, r: usize, byte: u8, color: VGAColorCode
             safe_write(&mut vga, cx as isize - y, cy as isize - x);
         }
     }
+}
+
+pub fn draw_point(x: usize, y: usize, color: VGAColorCode) {
+    if x >= BUFFER_WIDTH || y >= BUFFER_HEIGHT {
+        return;
+    }
+
+    let mut vga = VGA_TEXT_MODE.lock();
+    vga.write(BLOCK, color, x, y);
 }
