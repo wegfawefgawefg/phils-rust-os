@@ -1,4 +1,5 @@
 use bootloader_api::info::{FrameBuffer, FrameBufferInfo, PixelFormat};
+use libm::{cosf, powf, sinf, sqrtf};
 
 use crate::interupts;
 
@@ -18,6 +19,48 @@ impl Color {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Vec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+impl Vec3 {
+    const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    fn add(self, rhs: Self) -> Self {
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
+    }
+
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
+    }
+
+    fn mul(self, s: f32) -> Self {
+        Self::new(self.x * s, self.y * s, self.z * s)
+    }
+
+    fn dot(self, rhs: Self) -> f32 {
+        self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
+    }
+
+    fn len(self) -> f32 {
+        sqrtf(self.dot(self))
+    }
+
+    fn norm(self) -> Self {
+        let l = self.len();
+        if l <= 0.000_01 {
+            Self::new(0.0, 0.0, 0.0)
+        } else {
+            self.mul(1.0 / l)
+        }
+    }
+}
+
 struct Renderer<'a> {
     buffer: &'a mut [u8],
     info: FrameBufferInfo,
@@ -34,56 +77,6 @@ impl<'a> Renderer<'a> {
 
     fn height(&self) -> i32 {
         self.info.height as i32
-    }
-
-    fn clear(&mut self, color: Color) {
-        let bpp = self.info.bytes_per_pixel;
-        match self.info.pixel_format {
-            PixelFormat::Rgb => {
-                for px in self.buffer.chunks_exact_mut(bpp) {
-                    px[0] = color.r;
-                    if bpp > 1 {
-                        px[1] = color.g;
-                    }
-                    if bpp > 2 {
-                        px[2] = color.b;
-                    }
-                }
-            }
-            PixelFormat::Bgr => {
-                for px in self.buffer.chunks_exact_mut(bpp) {
-                    px[0] = color.b;
-                    if bpp > 1 {
-                        px[1] = color.g;
-                    }
-                    if bpp > 2 {
-                        px[2] = color.r;
-                    }
-                }
-            }
-            PixelFormat::U8 => {
-                let gray = ((u16::from(color.r) + u16::from(color.g) + u16::from(color.b)) / 3) as u8;
-                for px in self.buffer.chunks_exact_mut(bpp) {
-                    px[0] = gray;
-                }
-            }
-            PixelFormat::Unknown { .. } => {
-                for px in self.buffer.chunks_exact_mut(bpp) {
-                    px[0] = color.r;
-                    if bpp > 1 {
-                        px[1] = color.g;
-                    }
-                    if bpp > 2 {
-                        px[2] = color.b;
-                    }
-                }
-            }
-            _ => {
-                for px in self.buffer.chunks_exact_mut(bpp) {
-                    px[0] = color.r;
-                }
-            }
-        }
     }
 
     fn set_pixel(&mut self, x: i32, y: i32, color: Color) {
@@ -127,13 +120,55 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn draw_filled_circle(&mut self, cx: i32, cy: i32, radius: i32, color: Color) {
-        let r2 = radius * radius;
-        for y in -radius..=radius {
-            for x in -radius..=radius {
-                if x * x + y * y <= r2 {
-                    self.set_pixel(cx + x, cy + y, color);
+    fn fill(&mut self, color: Color) {
+        let bpp = self.info.bytes_per_pixel;
+        match self.info.pixel_format {
+            PixelFormat::Rgb => {
+                for px in self.buffer.chunks_exact_mut(bpp) {
+                    px[0] = color.r;
+                    if bpp > 1 {
+                        px[1] = color.g;
+                    }
+                    if bpp > 2 {
+                        px[2] = color.b;
+                    }
                 }
+            }
+            PixelFormat::Bgr => {
+                for px in self.buffer.chunks_exact_mut(bpp) {
+                    px[0] = color.b;
+                    if bpp > 1 {
+                        px[1] = color.g;
+                    }
+                    if bpp > 2 {
+                        px[2] = color.r;
+                    }
+                }
+            }
+            PixelFormat::U8 => {
+                let gray = ((u16::from(color.r) + u16::from(color.g) + u16::from(color.b)) / 3) as u8;
+                for px in self.buffer.chunks_exact_mut(bpp) {
+                    px[0] = gray;
+                }
+            }
+            _ => {
+                for px in self.buffer.chunks_exact_mut(bpp) {
+                    px[0] = color.r;
+                    if bpp > 1 {
+                        px[1] = color.g;
+                    }
+                    if bpp > 2 {
+                        px[2] = color.b;
+                    }
+                }
+            }
+        }
+    }
+
+    fn fill_block(&mut self, x0: i32, y0: i32, w: i32, h: i32, color: Color) {
+        for y in y0..(y0 + h) {
+            for x in x0..(x0 + w) {
+                self.set_pixel(x, y, color);
             }
         }
     }
@@ -144,27 +179,116 @@ impl<'a> Renderer<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct Ball {
-    x: i32,
-    y: i32,
-    vx: i32,
-    vy: i32,
-    radius: i32,
-    color: Color,
+struct Sphere {
+    center: Vec3,
+    radius: f32,
+    albedo: Vec3,
 }
 
-impl Ball {
-    fn step(&mut self, width: i32, height: i32) {
-        self.x += self.vx;
-        self.y += self.vy;
+fn clamp01(v: f32) -> f32 {
+    v.clamp(0.0, 1.0)
+}
 
-        if self.x - self.radius <= 0 || self.x + self.radius >= width - 1 {
-            self.vx = -self.vx;
-        }
-        if self.y - self.radius <= 0 || self.y + self.radius >= height - 1 {
-            self.vy = -self.vy;
+fn to_color(v: Vec3) -> Color {
+    Color::rgb(
+        (clamp01(v.x) * 255.0) as u8,
+        (clamp01(v.y) * 255.0) as u8,
+        (clamp01(v.z) * 255.0) as u8,
+    )
+}
+
+fn scene(tick: u64) -> [Sphere; 3] {
+    let t = tick as f32 * 0.045;
+    [
+        Sphere {
+            center: Vec3::new(
+                1.9 * sinf(t * 0.9 + 0.2),
+                1.1 * sinf(t * 1.3 + 1.2),
+                -3.4 + 1.0 * sinf(t * 0.7 + 2.1),
+            ),
+            radius: 0.52,
+            albedo: Vec3::new(1.0, 0.35, 0.35),
+        },
+        Sphere {
+            center: Vec3::new(
+                2.0 * cosf(t * 0.8 + 2.4),
+                1.0 * sinf(t * 1.1 + 0.5),
+                -3.2 + 1.15 * cosf(t * 0.6 + 1.1),
+            ),
+            radius: 0.48,
+            albedo: Vec3::new(0.35, 1.0, 0.55),
+        },
+        Sphere {
+            center: Vec3::new(
+                1.7 * sinf(t * 1.05 + 4.0),
+                1.2 * cosf(t * 0.95 + 0.9),
+                -3.6 + 0.9 * sinf(t * 0.8 + 4.2),
+            ),
+            radius: 0.44,
+            albedo: Vec3::new(0.4, 0.6, 1.0),
+        },
+    ]
+}
+
+fn ray_sphere_intersection(ro: Vec3, rd: Vec3, s: Sphere) -> Option<f32> {
+    let oc = ro.sub(s.center);
+    let a = rd.dot(rd);
+    let b = 2.0 * oc.dot(rd);
+    let c = oc.dot(oc) - s.radius * s.radius;
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sqrt_disc = sqrtf(disc);
+    let inv_2a = 1.0 / (2.0 * a);
+    let t0 = (-b - sqrt_disc) * inv_2a;
+    let t1 = (-b + sqrt_disc) * inv_2a;
+
+    if t0 > 0.0 {
+        Some(t0)
+    } else if t1 > 0.0 {
+        Some(t1)
+    } else {
+        None
+    }
+}
+
+fn raycast_spheres(ro: Vec3, rd: Vec3, spheres: &[Sphere; 3]) -> Option<(f32, usize)> {
+    let mut best_t = f32::INFINITY;
+    let mut best_id = 0usize;
+    let mut hit = false;
+
+    for (i, s) in spheres.iter().enumerate() {
+        if let Some(t) = ray_sphere_intersection(ro, rd, *s) {
+            if t < best_t {
+                best_t = t;
+                best_id = i;
+                hit = true;
+            }
         }
     }
+
+    if hit {
+        Some((best_t, best_id))
+    } else {
+        None
+    }
+}
+
+fn shade_hit(ro: Vec3, rd: Vec3, t: f32, s: Sphere) -> Vec3 {
+    let p = ro.add(rd.mul(t));
+    let n = p.sub(s.center).norm();
+    let light_pos = Vec3::new(0.0, 0.0, 2.5);
+    let l = light_pos.sub(p).norm();
+    let v = ro.sub(p).norm();
+    let h = l.add(v).norm();
+
+    let diff = clamp01(n.dot(l));
+    let spec = powf(clamp01(n.dot(h)), 28.0) * 0.4;
+    let amb = 0.08;
+    let shade = amb + diff * 0.95;
+
+    s.albedo.mul(shade).add(Vec3::new(spec, spec, spec))
 }
 
 pub fn run_bouncy_circles(framebuffer: &mut FrameBuffer) -> ! {
@@ -181,53 +305,38 @@ pub fn run_bouncy_circles(framebuffer: &mut FrameBuffer) -> ! {
     let backbuffer = unsafe { core::slice::from_raw_parts_mut(backbuffer_ptr, byte_len) };
     let mut renderer = Renderer::new(backbuffer, info);
 
-    let mut balls = [
-        Ball {
-            x: renderer.width() / 4,
-            y: renderer.height() / 3,
-            vx: 3,
-            vy: 2,
-            radius: 40,
-            color: Color::rgb(255, 70, 70),
-        },
-        Ball {
-            x: renderer.width() / 2,
-            y: renderer.height() / 2,
-            vx: -2,
-            vy: 3,
-            radius: 30,
-            color: Color::rgb(70, 255, 120),
-        },
-        Ball {
-            x: renderer.width() * 3 / 4,
-            y: renderer.height() * 2 / 3,
-            vx: 2,
-            vy: -2,
-            radius: 50,
-            color: Color::rgb(90, 140, 255),
-        },
-    ];
-
-    let background = Color::rgb(7, 8, 16);
-    let spec = Color::rgb(255, 255, 255);
+    let render_w = (renderer.width() / 10).max(80);
+    let render_h = (renderer.height() / 10).max(45);
+    let block_w = (renderer.width() / render_w).max(1);
+    let block_h = (renderer.height() / render_h).max(1);
+    let aspect = render_w as f32 / render_h as f32;
+    let camera = Vec3::new(0.0, 0.0, 2.8);
+    let fov = 1.1f32;
 
     loop {
-        let last_tick = interupts::timer_ticks();
+        let frame_tick = interupts::timer_ticks();
+        let spheres = scene(frame_tick);
+        renderer.fill(Color::rgb(0, 0, 0));
+        let jitter = if (frame_tick & 1) == 0 { 0.25 } else { -0.25 };
 
-        renderer.clear(background);
-
-        for ball in &balls {
-            renderer.draw_filled_circle(ball.x, ball.y, ball.radius, ball.color);
-            renderer.draw_filled_circle(ball.x + ball.radius / 3, ball.y - ball.radius / 3, 5, spec);
-        }
-
-        for ball in &mut balls {
-            ball.step(renderer.width(), renderer.height());
+        for py in 0..render_h {
+            for px in 0..render_w {
+                let uvx = ((px as f32 + 0.5 + jitter) / render_w as f32) * 2.0 - 1.0;
+                let uvy = ((py as f32 + 0.5 - jitter) / render_h as f32) * 2.0 - 1.0;
+                let rd = Vec3::new(uvx * aspect * fov, -uvy * fov, -1.0).norm();
+                let c = if let Some((t_hit, id)) = raycast_spheres(camera, rd, &spheres) {
+                    shade_hit(camera, rd, t_hit, spheres[id])
+                } else {
+                    let sky = 0.15 + 0.85 * clamp01(0.5 + 0.5 * rd.y);
+                    Vec3::new(0.02, 0.03, 0.08).mul(sky)
+                };
+                renderer.fill_block(px * block_w, py * block_h, block_w, block_h, to_color(c));
+            }
         }
 
         renderer.present(framebuffer_bytes);
 
-        while interupts::timer_ticks() == last_tick {
+        while interupts::timer_ticks() == frame_tick {
             core::hint::spin_loop();
         }
     }
