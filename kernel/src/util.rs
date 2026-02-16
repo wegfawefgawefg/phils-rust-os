@@ -1,16 +1,8 @@
-use core::fmt::Write;
-
 use core::panic::PanicInfo;
 
-use crate::vga_text_mode_terminal::VGA_TEXT_MODE_TERMINAL;
-
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    let mut vga_terminal = VGA_TEXT_MODE_TERMINAL.lock();
-    vga_terminal.col = 0; // Reset to start of screen
-    let _ = write!(&mut *vga_terminal, "PANIC: {}", info);
-
-    loop {}
+fn panic(_info: &PanicInfo) -> ! {
+    halt_loop()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
